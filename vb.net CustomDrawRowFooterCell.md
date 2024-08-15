@@ -1,6 +1,8 @@
 "vb.net
 "Luego de agrupar los registros en el view.
 
+Se utiliza para calcular los grupos en control grid, vb.net, a nivel de codigo por medio del eventos CustomDrawRowFooterCell, y utilizando los niveles o level de los campos agrupados.
+
 Private Sub dtg_pedidos_por_anio_int_CustomDrawRowFooterCell(sender As Object, e As FooterCellCustomDrawEventArgs) Handles dtg_pedidos_por_anio_int.CustomDrawRowFooterCell
         Dim level As Integer = Me.dtg_pedidos_por_anio_int.GetRowLevel(e.RowHandle)
         Dim valor As Double = 0
