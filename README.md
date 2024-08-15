@@ -1,5 +1,5 @@
 
-Devexpress vb.net
+Devexpress vb.net impresos
 Asignar en los grupos del reporte porcentajes, de manera personalizada o manual. 
 Nota: observar los metodos que se refieren a despues de impreso el reporte. es decir despues que coloca los valores en los campos sumados el sistema toma los datos con el AfterPrint, y los pone en estado disponible por medio de una variable  para el metodo SummaryGetResult los tome y calcule el porcentaje. abajo dos 
 
