@@ -1,0 +1,184 @@
+DELIMITER $$
+
+USE `pa7_cg`$$
+
+DROP PROCEDURE IF EXISTS `sp_get_bonificaciones_uber`$$
+
+CREATE DEFINER=`admin`@`%` PROCEDURE `sp_get_bonificaciones_uber`()
+BEGIN
+	DECLARE v_contador INT;
+		
+	DECLARE v_consulta_uno		TEXT;		
+	DECLARE v_consulta_dos		TEXT;		
+	DECLARE v_consulta_tres		TEXT;
+	
+	DECLARE v_columnas VARCHAR(20);
+	DECLARE v_cant_columnas INT;
+	
+	DECLARE v_Empresa INT;
+	DECLARE v_marca INT;
+	DECLARE v_id INT;
+	DECLARE v_operacion INT ;
+	DECLARE v_NroMesesBonificacion INT;	
+	DECLARE v_mes INT;
+	DECLARE v_anio INT;
+	DECLARE v_codEstado INT;
+	DECLARE v_nomEstado VARCHAR(40);
+	DECLARE v_importe_bonificacion INT; -- decimal(18,2);
+	
+	DECLARE v_fecha_entrega_mayor DATETIME;
+	DECLARE v_fecha_entrega_minima DATETIME;
+	DECLARE v_nro_mayor_meses INT;
+	
+	DECLARE done INT DEFAULT FALSE;
+	DECLARE cursor_detalle CURSOR FOR
+	SELECT 
+	8 'Empresa'
+	, br.`id`
+	, br.`marca`
+	, br.`operacion`
+	, br.`NroMesesBonificacion`
+	, bd.`mes`
+	, bd.`anio`
+	, bd.`estado_bonificacion`
+	, op.Descripcion
+	, bd.`importe_bonificacion` 
+	FROM bonificaciones_uber br 
+	LEFT JOIN bonificaciones_uber_detalle_mes bd ON br.`id` = bd.`idBonificacion`
+	LEFT JOIN `bonificaciones_uber_estados` op ON bd.`estado_bonificacion` = op.`id`
+	;
+	DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+	
+	DROP TEMPORARY TABLE IF EXISTS tt_tab;
+	CREATE TEMPORARY TABLE tt_tab(
+		t_Empresa VARCHAR(50)		
+		, t_fechaalta DATETIME
+		, t_Solicitud INT
+		, t_codigo INT
+		, t_Grupo_orden VARCHAR(10) -- , t_Orden int
+		, t_Apellido_Nombres VARCHAR(100)
+		, t_NroDocumento LONG
+		, t_codModelo_nomModelo VARCHAR(50)
+		, t_codTipoPlan_nomTipoPlan VARCHAR(40)
+		, t_Dominio VARCHAR(20)
+		, t_FechaEntrega DATETIME
+		, t_marca INT
+		, t_NroMesesBonificacion_t_ExtensionNroMesesBonificacion VARCHAR(20)
+		);
+	 		 	
+	 	-- ************************************************
+		-- *-*************lleno la tbl temporal ***********
+		-- ************************************************
+		
+		SET lc_time_names = 'es_ES';
+		INSERT INTO tt_tab		
+		SELECT (SELECT Nombre  FROM `empresas`) AS 'Empresa', p.fechaalta, o.`Solicitud`, o.`Codigo` 
+		, CONCAT(o.`Grupo`,"/", o.`Orden`), CONCAT(o.`Apellido`,", ", o.`Nombres`), o.`NroDocumento`
+		, CONCAT("(",o.`Modelo`,") ", m.`Nombre`), tp.`Descripcion` 'nomTipoPlan'
+		, o.`Dominio`,  o.`FechaEntrega` , o.Marca 
+		, CONCAT(IF(b.NroMesesBonificacion < 10,CONCAT("0",b.NroMesesBonificacion),b.NroMesesBonificacion), "-", b.`ExtensionNroMesesBonificacion`)
+		FROM `operaciones` o 
+		LEFT JOIN pre_solicitudes p ON o.`Solicitud` = p.`Solicitud` AND o.`Marca` = p.`Marca`
+		LEFT JOIN `origensuscripcion` os ON o.`OrigenSuscripcion` = os.`Codigo`
+		LEFT JOIN modelos m ON o.`Modelo` = m.`Codigo`
+		LEFT JOIN `tipoplan` tp ON o.`TipoPlan` = tp.`ID`
+		LEFT JOIN bonificaciones_uber b ON o.`Codigo` = b.`operacion` AND o.`Marca` = b.`marca`
+		WHERE 
+		((NOT o.`FechaEntrega` IS NULL ) 
+		OR (NOT o.`Dominio` IS NULL))		
+		AND UPPER (os.`Descripcion`) = "UBER"
+		AND o.`Activo` = 1	 
+		;
+			
+	 	SET v_nro_mayor_meses = (SELECT MAX(`NroMesesBonificacion`) FROM bonificaciones_uber);		 
+		 
+		IF IFNULL(v_nro_mayor_meses,0) > 0 THEN															    
+			SET v_fecha_entrega_mayor = (	SELECT DATE_FORMAT(MAX(o.`FechaEntrega`), '%Y%m%d')
+							FROM bonificaciones_uber b
+							LEFT JOIN `operaciones` o  ON b.`operacion` = o.`Codigo` AND b.`marca` = o.`Marca`
+							WHERE NOT o.`FechaEntrega` IS NULL
+						     );	
+											     
+			SET v_fecha_entrega_minima = (	SELECT DATE_FORMAT(DATE_ADD(MIN(o.`FechaEntrega`), INTERVAL + 1 MONTH), '%Y%m%d')
+							FROM bonificaciones_uber b
+							LEFT JOIN `operaciones` o  ON b.`operacion` = o.`Codigo` AND b.`marca` = o.`Marca`
+							WHERE NOT o.`FechaEntrega` IS NULL
+						     );			
+			 
+			
+			-- creo las columnas en base a los numeros de meses necesarios + el mes de la operacion y anio.
+			SET v_contador = 1;
+			SET v_consulta_uno = "ALTER TABLE tt_tab ";		
+			SET v_columnas = "add column ";		
+			SET v_consulta_tres = "UPDATE tt_tab SET ";		
+			SET v_nro_mayor_meses = v_nro_mayor_meses + 1;
+			WHILE DATE_FORMAT(v_fecha_entrega_minima, '%Y%m') <=  DATE_FORMAT(DATE_ADD(v_fecha_entrega_mayor, INTERVAL + v_nro_mayor_meses MONTH), '%Y%m') DO -- <= v_cant_columnas  DO					
+				IF DATE_FORMAT(v_fecha_entrega_minima, '%Y%m') =  DATE_FORMAT(DATE_ADD(v_fecha_entrega_mayor, INTERVAL + v_nro_mayor_meses MONTH), '%Y%m') THEN
+					SET v_consulta_uno = CONCAT(v_consulta_uno, v_columnas,DATE_FORMAT(v_fecha_entrega_minima, '%Y%m'),"_ varchar(30)",", ", v_columnas, " TotalImportes ", "decimal(18,2)" , '; ');
+					SET v_consulta_tres = CONCAT(v_consulta_tres,"", DATE_FORMAT(v_fecha_entrega_minima, '%Y%m'),"_ = ' -- ';");
+				ELSE
+					SET v_consulta_uno = CONCAT(v_consulta_uno, v_columnas,DATE_FORMAT(v_fecha_entrega_minima, '%Y%m'),"_ varchar(30)", ', ');
+					SET v_consulta_tres = CONCAT(v_consulta_tres,"", DATE_FORMAT(v_fecha_entrega_minima, '%Y%m'),"_ = ' -- ', ","");
+				END IF;					
+				SET v_fecha_entrega_minima = DATE_FORMAT(DATE_ADD(v_fecha_entrega_minima, INTERVAL + 1 MONTH), '%Y%m%d');							
+			END WHILE;
+			
+	-- 	 	select v_consulta_uno	;
+	--     		select v_consulta_cuatro;
+				
+			-- ******************************
+			-- * ejecuto la funcion armada. *
+			-- ******************************
+					
+			SET @Query = v_consulta_uno;
+			PREPARE stmt FROM @Query;
+			-- Ejecutando la sentencia preparada
+			EXECUTE stmt;		
+			DEALLOCATE PREPARE stmt;
+	 
+		
+			SET @Query = v_consulta_tres;
+			PREPARE stmt FROM @Query;
+			-- Ejecutando la sentencia preparada
+			EXECUTE stmt;		
+			DEALLOCATE PREPARE stmt;
+			
+			-- ***************************************************************************************************
+			-- abro el cursor
+			-- para colocar por cada operacion los meses que le corresponde con el contenido de la columna.
+			-- ***************************************************************************************************
+			
+			OPEN cursor_detalle;
+			read_loop: LOOP
+			FETCH cursor_detalle INTO v_Empresa, v_id, v_marca, v_operacion, v_NroMesesBonificacion, v_mes, v_anio, v_codEstado, v_nomEstado, v_importe_bonificacion
+			;			
+				IF done THEN
+					LEAVE read_loop;
+				END IF;						 
+					IF EXISTS(SELECT t_codigo FROM tt_tab WHERE  t_codigo = v_operacion AND t_marca = v_marca)THEN -- t_Empresa = v_Empresa
+						-- Busco los detalles de cada operacion.								 							
+						
+						SET v_consulta_dos = "update tt_tab set ";
+						IF UPPER(v_nomEstado) = "BONIFICADO" THEN
+							-- SET v_consulta_dos = CONCAT(v_consulta_dos, v_anio, if(v_mes < 10, concat("0",v_mes),v_mes), "_ =",if(ifnull(v_importe_bonificacion,0) = 0,0, v_importe_bonificacion), " where t_codigo = ", v_operacion, ";");											 
+							SET v_consulta_dos = CONCAT(v_consulta_dos, v_anio, IF(v_mes < 10, CONCAT("0",v_mes),v_mes), "_ =",IF(IFNULL(v_importe_bonificacion,0) = 0,0, CONCAT("'",FORMAT(v_importe_bonificacion,0),"'")), " where t_codigo = ", v_operacion, ";");											 
+							UPDATE tt_tab SET TotalImportes = IFNULL(TotalImportes,0) + v_importe_bonificacion WHERE  t_codigo = v_operacion AND t_marca = v_marca;
+						ELSE
+							SET v_consulta_dos = CONCAT(v_consulta_dos, v_anio, IF(v_mes < 10, CONCAT("0",v_mes),v_mes), "_ =",'"',v_nomEstado,'"', " where t_codigo = ", v_operacion, ";");					
+							-- SET v_consulta_dos = CONCAT(v_consulta_dos, v_anio, IF(v_mes < 10, CONCAT("0",v_mes),v_mes), "_ =",'"',IF(IFNULL(v_nomEstado,"Completar") <> "Completar",v_nomEstado, "Completar") ,'"', " where t_codigo = ", v_operacion, ";");												
+						END IF;				
+		--  				SELECT v_consulta_dos;								
+						SET @Query = v_consulta_dos;
+						PREPARE stmt FROM @Query;
+						-- Ejecutando la sentencia preparada
+						EXECUTE stmt;		
+						DEALLOCATE PREPARE stmt;
+					END IF;	
+			END LOOP;		
+			CLOSE cursor_detalle;	
+		END IF;
+	SELECT * FROM tt_tab ;		
+	DROP TEMPORARY TABLE IF EXISTS tt_tab;
+    END$$
+
+DELIMITER ;
